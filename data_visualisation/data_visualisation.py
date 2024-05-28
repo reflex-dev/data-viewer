@@ -1,6 +1,6 @@
 """Welcome to Reflex! This file outlines the steps to create a basic app."""
 
-from sqlmodel import select
+from sqlmodel import select, asc, or_
 import reflex as rx
 
 from data_visualisation.models import Customer, Cereals, Covid, Countries
@@ -16,6 +16,7 @@ class State(rx.State):
 
     items: list[MODEL] = []
     sort_value: str = ""
+    search_value: str = ""
     num_items: int
     current_item: MODEL = MODEL()
 
@@ -32,20 +33,36 @@ class State(rx.State):
     def load_entries(self) -> list[MODEL]:
         """Get all items from the database."""
         with rx.session() as session:
-            self.items = session.exec(select(MODEL)).all()
-            self.num_items = len(self.items)
+            query = select(MODEL)
 
-            if self.sort_value:
-                self.items = sorted(
-                    self.items,
-                    key=lambda item: getattr(item, self.sort_value),
+            if self.search_value != "":
+                search_value = (
+                    f"%{self.search_value.lower()}%"
                 )
+                query = query.where(
+                    or_(
+                        *[getattr(MODEL, field).ilike(search_value) for field in MODEL.get_fields()],
+                    )
+                )
+
+            if self.sort_value != "":
+                sort_column = getattr(
+                    MODEL, self.sort_value
+                )
+                order = asc(sort_column)
+                query = query.order_by(order)
+
+            self.items = session.exec(query).all()
+            self.num_items = len(self.items)
 
 
     def sort_values(self, sort_value: str):
         self.sort_value = sort_value
         self.load_entries()
 
+    def filter_values(self, search_value):
+        self.search_value = search_value
+        self.load_entries()
 
     def get_item(self, item: MODEL):
         self.current_item = item
@@ -94,7 +111,7 @@ class State(rx.State):
         with rx.session() as session:
             # Attempt to retrieve the first entry in the MODEL table
             first_entry = session.exec(select(MODEL)).first()
-            # If nothing was returned load data from the csv file
+            # If nothing was returned load data from the data file
             if first_entry is None and data_file_path != "":
                 loading_data(data_file_path, MODEL)
 
@@ -338,6 +355,12 @@ def content():
                     size="3",
                     on_change=lambda sort_value: State.sort_values(sort_value),
                     font_family="Inter",
+                ),
+                rx.input(
+                    placeholder="Search here...",
+                    on_change=lambda value: State.filter_values(
+                        value
+                    ),
                 ),
                 width="100%",
                 padding_x="2em",
